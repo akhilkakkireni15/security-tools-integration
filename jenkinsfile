@@ -89,25 +89,26 @@ pipeline {
 
         stage('S6 - Docker Build for Python App') {
             steps {
-                dir('python_app') {
-                    sh '''#!/bin/bash
-                        set -eux
-                        if [ ! -f Dockerfile ]; then
-                            echo "❌ Dockerfile not found in python_app directory"
-                            exit 1
-                        fi
+                sh '''#!/bin/bash
+                    set -eux
+                    if [ ! -f python_app/Dockerfile ]; then
+                        echo "❌ Dockerfile not found in python_app directory"
+                        exit 1
+                    fi
 
-                        docker build -t $DOCKERHUB_USER/$IMAGE_NAME:latest .
+                    # Build from project root, using python_app/Dockerfile
+                    docker build -t $DOCKERHUB_USER/$IMAGE_NAME:latest -f python_app/Dockerfile .
 
-                        existing_container=$(docker ps -q --filter "publish=8005" || true)
-                        if [ -n "$existing_container" ]; then
-                            docker stop $existing_container || true
-                            docker rm $existing_container || true
-                        fi
-                    '''
-                }
+                    # Stop/remove existing container on port 8005 if any
+                    existing_container=$(docker ps -q --filter "publish=8005" || true)
+                    if [ -n "$existing_container" ]; then
+                        docker stop $existing_container || true
+                        docker rm $existing_container || true
+                    fi
+                '''
             }
         }
+
 
         stage('S7 - Trivy Image Scan') {
             steps {
