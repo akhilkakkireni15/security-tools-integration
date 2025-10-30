@@ -1,14 +1,8 @@
-import os
 from flask import Flask, jsonify
 from redis_client import get_redis_client
 
 app = Flask(__name__)
 redis_client = get_redis_client()
-
-@app.route('/apikey')
-def get_key():
-    api_key = os.getenv("API_KEY", "No API key found")
-    return jsonify({"api_key": api_key})
 
 # Missing Exception Handling
 @app.route('/danger')
