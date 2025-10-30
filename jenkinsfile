@@ -14,19 +14,19 @@ pipeline {
 
     stages {
 
-        stage('S1 - Clean Workspace') {
+        stage('Clean Workspace') {
             steps {
                 cleanWs()
             }
         }
 
-        stage('S2 - Checkout SCM') {
+        stage('Checkout SCM') {
             steps {
                 checkout scm
             }
         }
 
-        stage('S3 - GitLeaks Scan') {
+        stage('GitLeaks Scan') {
             steps {
                 sh '''#!/bin/bash
                     set -eux
@@ -52,7 +52,7 @@ pipeline {
             }
         }
 
-        stage('S4 - SonarQube Analysis') {
+        stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv(credentialsId: 'akhil-sonar', installationName: 'akhil-sq') {
                     sh '''#!/bin/bash
@@ -79,7 +79,7 @@ pipeline {
             }
         }
 
-        stage('S5 - Quality Gate') {
+        stage('Quality Gate') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
@@ -87,7 +87,7 @@ pipeline {
             }
         }
 
-        stage('S6 - Docker Build for Python App') {
+        stage('Docker Build for Python App') {
             steps {
                 sh '''#!/bin/bash
                     set -eux
@@ -110,7 +110,7 @@ pipeline {
         }
 
 
-        stage('S7 - Trivy Image Scan') {
+        stage('Trivy Image Scan') {
             steps {
                 sh '''#!/bin/bash
                     set -eux
@@ -130,7 +130,7 @@ pipeline {
             }
         }
 
-        stage('S8 - Deploy App Locally') {
+        stage('Deploy App Locally') {
             when {
                 expression { currentBuild.currentResult == 'SUCCESS' }
             }
