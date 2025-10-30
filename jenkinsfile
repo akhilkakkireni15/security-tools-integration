@@ -35,7 +35,7 @@ pipeline {
                     ]]) {
                         sh '''
                             echo "Using secret in Python app"
-                            python3 app.py
+               
                             python3 python_app/app.py
                         '''
                     }
