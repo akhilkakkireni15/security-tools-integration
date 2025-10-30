@@ -138,7 +138,7 @@ pipeline {
                     set -eux
                     echo "Deploying application locally..."
                     docker ps -q --filter "publish=8005" | xargs -r docker rm -f || true
-                    docker run -d -p 8005:5000 --name python-app $DOCKERHUB_USER/$IMAGE_NAME:latest
+                    docker run -d -p 8005:5000 --name python_app $DOCKERHUB_USER/$IMAGE_NAME:latest
                     echo "✅ Application deployed and running locally on port 8005"
                 '''
             }
