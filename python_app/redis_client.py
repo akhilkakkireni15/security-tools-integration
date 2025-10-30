@@ -4,7 +4,7 @@ def get_redis_client():
     # ❌ Intentionally hardcoded secret
     redis_host = "localhost"
     redis_port = 6379
-    redis_password = "Password123!"  # Sonar will flag this
+   
     
     try:
         client = redis.Redis(
