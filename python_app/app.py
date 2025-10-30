@@ -7,15 +7,8 @@ redis_client = get_redis_client()
 
 @app.route('/apikey')
 def get_key():
-    API_KEY = "ghp_abCDeFgHijKLMNOPqrstuVWxyZ012345678"
     api_key = os.getenv("API_KEY", "No API key found")
-
     return jsonify({"api_key": api_key})
-
-@app.route('/')
-def home():
-    return jsonify({"message": "Flask app running. Use /apikey to get the API key."})
-
 
 # Missing Exception Handling
 @app.route('/danger')

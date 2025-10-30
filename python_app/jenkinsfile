@@ -27,7 +27,6 @@ pipeline {
                         set -euxo pipefail
                         rm -rf venv
                         python3 -m venv venv
-                        pip install flask
                         ./venv/bin/pip install --upgrade pip
                         ./venv/bin/pip install -r requirements.txt
                         ./venv/bin/python -m pytest tests/ --maxfail=1 --disable-warnings -q \
