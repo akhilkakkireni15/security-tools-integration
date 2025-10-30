@@ -25,6 +25,23 @@ pipeline {
                 checkout scm
             }
         }
+        stage('Fetch Secret from Vault') {
+            steps {
+                script {
+                    withVault([vaultSecrets: [
+                        [path: 'secret/app_secret', secretValues: [
+                            [envVar: 'API_KEY', vaultKey: 'app1']
+                        ]]
+                    ]]) {
+                        sh '''
+                            echo "Using secret in Python app"
+                            python3 app.py
+                            python3 python_app/app.py
+                        '''
+                    }
+                }
+            }
+        }
 
         stage('GitLeaks Scan') {
             steps {
