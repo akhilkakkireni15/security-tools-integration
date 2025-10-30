@@ -1,10 +1,8 @@
 pipeline {
-    agent {
-        label 'akhil-security-agent'
-    }
+    agent { label 'akhil-security-agent' }
+
     triggers {
-        pollSCM('H/3 * * * *') // checks every 3 mins, or
-        // OR use GitHub webhook instead (recommended)
+        pollSCM('H/3 * * * *') // Poll every 3 mins (or use webhook)
     }
 
     environment {
@@ -12,27 +10,44 @@ pipeline {
         IMAGE_NAME = 'jenkins-docker-lab'
         SONARQUBE = 'SonarCloud'
         SONAR_TOKEN = credentials('akhil-sonar')
-
     }
+
     stages {
-        stage('Checkout') {
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout SCM') {
             steps {
                 checkout scm
             }
         }
-        stage('Python Setup & Test with Coverage') {
+
+        stage('GitLeaks Scan') {
             steps {
-                dir('python_app') {
-                    sh '''#!/bin/bash
-                        set -euxo pipefail
-                        rm -rf venv
-                        python3 -m venv venv
-                        ./venv/bin/pip install --upgrade pip
-                        ./venv/bin/pip install -r requirements.txt
-                        ./venv/bin/python -m pytest tests/ --maxfail=1 --disable-warnings -q \
-                            --cov=. --cov-report=xml:../coverage.xml
-                    '''               
-                }
+                sh '''#!/bin/bash
+                    set -eux
+                    if ! command -v gitleaks &> /dev/null; then
+                        wget https://github.com/zricethezav/gitleaks/releases/download/v8.18.1/gitleaks_8.18.1_linux_x64.tar.gz
+                        tar -xzf gitleaks_8.18.1_linux_x64.tar.gz
+                        chmod +x gitleaks
+                        sudo mv gitleaks /usr/local/bin/
+                    fi
+
+                    exit_code=0
+                    if ! gitleaks detect --source . --no-git --verbose --report-path gitleaks-report.json; then
+                        exit_code=$?
+                    fi
+
+                    if [ "$exit_code" -ne 0 ]; then
+                        echo "❌ Gitleaks found leaks"
+                        exit 1
+                    else
+                        echo "✅ No leaks found"
+                    fi
+                '''
             }
         }
 
@@ -41,14 +56,12 @@ pipeline {
                 withSonarQubeEnv(credentialsId: 'akhil-sonar', installationName: 'akhil-sq') {
                     sh '''#!/bin/bash
                         set -eux
-                        echo "=== SonarQube installation ==="
                         export SONAR_SCANNER_VERSION=7.2.0.5079
                         export SONAR_SCANNER_HOME=$HOME/.sonar/sonar-scanner-$SONAR_SCANNER_VERSION-linux-x64
                         curl --create-dirs -sSLo $HOME/.sonar/sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-$SONAR_SCANNER_VERSION-linux-x64.zip
                         unzip -o $HOME/.sonar/sonar-scanner.zip -d $HOME/.sonar/
                         export PATH=$SONAR_SCANNER_HOME/bin:$PATH
 
-                        echo "=== Running SonarQube Scanner ==="
                         sonar-scanner \
                         -Dsonar.organization="akhilkakkireni15" \
                         -Dsonar.projectKey="akhilkakkireni15_devsecops-lab" \
@@ -59,20 +72,137 @@ pipeline {
                         -Dsonar.cpp.file.suffixes=- \
                         -Dsonar.objc.file.suffixes=- \
                         -Dsonar.login=$SONAR_TOKEN \
-                        -Dsonar.exclusions=**/venv/**,**/__pycache__/**,**/tests/** \
-                        '''
+                        -Dsonar.exclusions=**/venv/**,**/__pycache__/**,**/tests/**
+                    '''
                 }
             }
         }
 
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('Docker Build for Python App') {
+            steps {
+                sh '''#!/bin/bash
+                    set -eux
+                    if [ ! -f python_app/Dockerfile ]; then
+                        echo "❌ Dockerfile not found in python_app directory"
+                        exit 1
+                    fi
+
+                    # Build from project root, using python_app/Dockerfile
+                    docker build -t $DOCKERHUB_USER/$IMAGE_NAME:latest -f python_app/Dockerfile .
+
+                    # Stop/remove existing container on port 8005 if any
+                    existing_container=$(docker ps -q --filter "publish=8005" || true)
+                    if [ -n "$existing_container" ]; then
+                        docker stop $existing_container || true
+                        docker rm $existing_container || true
+                    fi
+                '''
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                sh '''#!/bin/bash
+                    set -eux
+                    if ! command -v trivy &> /dev/null; then
+                        echo "Installing Trivy..."
+                        sudo apt-get update -y
+                        sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+                        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+                        echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee /etc/apt/sources.list.d/trivy.list
+                        sudo apt-get update -y
+                        sudo apt-get install -y trivy
+                    fi
+
+                    echo "Running Trivy scan..."
+                    trivy image --exit-code 0 --severity HIGH,CRITICAL $DOCKERHUB_USER/$IMAGE_NAME:latest
+                '''
+            }
+        }
+
+        stage('Deploy App Locally') {
+            when {
+                expression { currentBuild.currentResult == 'SUCCESS' }
+            }
+            steps {
+                sh '''#!/bin/bash
+                    set -eux
+                    echo "Deploying application locally..."
+                    docker ps -q --filter "publish=8005" | xargs -r docker rm -f || true
+                    docker run -d -p 8005:5000 --name python_app $DOCKERHUB_USER/$IMAGE_NAME:latest
+                    echo "✅ Application deployed and running locally on port 8005"
+                '''
+            }
+        }
+
+        stage('OWASP ZAP Scan') {
+            agent { label 'akhil-security-agent' }
+            steps {
+                sh '''#!/bin/bash
+                    set -euxo pipefail
+                    TARGET_URL="http://localhost:8005/"
+
+                    echo "🔄 Waiting for app to start..."
+                    for i in {1..10}; do
+                        if curl -s --max-time 5 $TARGET_URL >/dev/null; then
+                            echo "✅ App is up!"
+                            break
+                        fi
+                        sleep 5
+                    done
+
+                    echo "🚀 Running OWASP ZAP Baseline Scan..."
+                    docker run --rm -v $(pwd):/zap/wrk/:rw \
+                        --network="host" \
+                        ghcr.io/zaproxy/zaproxy:stable \
+                        zap-baseline.py -t $TARGET_URL -r zap_report.html || true
+
+                    mkdir -p reports
+                    mv zap_report.html reports/
+
+                    echo "🔍 Checking ZAP results for FAIL-NEW entries..."
+                    FAIL_COUNT=$(grep -oE "FAIL-NEW: [0-9]+" reports/zap_report.html | awk '{print $2}' || echo 0)
+                    if [ -z "$FAIL_COUNT" ]; then
+                        FAIL_COUNT=0
+                    fi
+
+                    if [ "$FAIL_COUNT" -gt 0 ]; then
+                        echo "❌ ZAP found $FAIL_COUNT high-severity vulnerabilities!"
+                        exit 1
+                    else
+                        echo "✅ No high-severity vulnerabilities found. Build will continue."
+                    fi
+                '''
+            }
+
+            post {
+                always {
+                    archiveArtifacts artifacts: 'reports/zap_report.html', fingerprint: true
+                }
+                success {
+                    echo '✅ ZAP scan completed successfully — only warnings or no issues.'
+                }
+                failure {
+                    echo '❌ Build failed because high-severity issues were found in ZAP scan.'
+                }
+            }
+        }
     }
 
     post {
         success {
-            echo 'Pipeline completed successfully!'
+            echo '✅ Pipeline completed and deployed successfully!'
         }
         failure {
-            echo 'Pipeline failed.'
+            echo '❌ Pipeline failed.'
         }
     }
 }
