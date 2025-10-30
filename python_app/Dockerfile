@@ -26,6 +26,7 @@ COPY python_app/ /app/
 # Create non-root user
 RUN useradd -r -u 10001 appuser && chown -R appuser:appuser /app
 USER appuser
+RUN pip install flask
 
 EXPOSE 5000
 
